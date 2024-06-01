@@ -240,6 +240,9 @@ hash_empty (struct hash *h) {
 #define FNV_64_BASIS 0xcbf29ce484222325UL
 
 /* Returns a hash of the SIZE bytes in BUF. */
+/* 이 함수는 주어진 버퍼의 바이트에 대한 해시를 계산하는데 사용됩니다.
+ 해시 값은 64비트 unsigned integer로 반환됩니다.
+ Fowler-Noll-Vo(FNV) 해시 알고리즘을 사용합니다. */
 uint64_t
 hash_bytes (const void *buf_, size_t size) {
 	/* Fowler-Noll-Vo 32-bit hash, for bytes. */

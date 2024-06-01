@@ -3,6 +3,10 @@
 #include "threads/malloc.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
+#include "include/lib/kernel/hash.h"
+#include "include/threads/vaddr.h"
+
+struct list frame_list;
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -63,10 +67,15 @@ err:
 /* Find VA from spt and return page. On error, return NULL. */
 struct page *
 spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
-	struct page *page = NULL;
-	/* TODO: Fill this function. */
-
-	return page;
+	struct page *page = (struct page*) malloc(sizeof(struct page));
+	struct hash_elem *e;
+	page->va = pg_round_down(va); // 페이지의 시작 주소를 가리키는 포인터를 반환합니다. 
+//  struct hash_elem * 
+//	hash_find(struct hash *, struct hash_elem *) 
+	free(page);
+	e = hash_find(&spt->hash_brown,&page->hash_elem);
+	if (e==NULL) {return NULL; } 
+	return hash_entry(e,struct page,hash_elem);		
 }
 
 /* Insert PAGE into spt with validation. */
@@ -74,8 +83,10 @@ bool
 spt_insert_page (struct supplemental_page_table *spt UNUSED,
 		struct page *page UNUSED) {
 	int succ = false;
-	/* TODO: Fill this function. */
-
+	// Insert struct page into the given supplemental page table. 
+	// This function should checks that the virtual address does not exist in the given supplemental page table.
+	// hash_insert -> 
+	succ = page_insert(&spt->hash_brown, page);
 	return succ;
 }
 
@@ -90,8 +101,20 @@ static struct frame *
 vm_get_victim (void) {
 	struct frame *victim = NULL;
 	 /* TODO: The policy for eviction is up to you. */
+	// for문 돌면서 추방할녀석 선정하기
+	struct list_elem *e = list_begin(&frame_list);
+	struct thread *cur = thread_current();
 
-	return victim;
+	for (e; e!=list_end(&frame_list); e = list_next(e)) {
+		victim = list_entry(e, struct frame, frame_elem);
+		if (pml4_is_accssed(cur->pml4, victim->page->va)) {
+			
+		} else {
+			return victim;
+		}
+	}
+
+	return NULL;
 }
 
 /* Evict one page and return the corresponding frame.
@@ -100,7 +123,7 @@ static struct frame *
 vm_evict_frame (void) {
 	struct frame *victim UNUSED = vm_get_victim ();
 	/* TODO: swap out the victim and return the evicted frame. */
-
+	swap_out(victim->page);
 	return NULL;
 }
 
@@ -113,6 +136,11 @@ vm_get_frame (void) {
 	struct frame *frame = NULL;
 	/* TODO: Fill this function. */
 
+	frame->kva = palloc_get_page(PAL_USER);
+	if(frame->kva == NULL) {
+		PANIC("todolater"); // 추방알고리즘 
+	}
+	list_push_back(&frame_list,&frame->frame_elem);
 	ASSERT (frame != NULL);
 	ASSERT (frame->page == NULL);
 	return frame;
@@ -153,7 +181,10 @@ bool
 vm_claim_page (void *va UNUSED) {
 	struct page *page = NULL;
 	/* TODO: Fill this function */
-
+	page = spt_find_page(&thread_current()->spt, va);
+	if (page == NULL) {
+		return false;
+	}
 	return vm_do_claim_page (page);
 }
 
@@ -167,13 +198,15 @@ vm_do_claim_page (struct page *page) {
 	page->frame = frame;
 
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
-
+	if (!install_page(page->va,  frame->kva , false)) {return;}// install_page 안에 pml4_set_page( page->va, frame->kva, false);이 있음
 	return swap_in (page, frame->kva);
 }
 
 /* Initialize new supplemental page table */
 void
 supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
+//  hash_init(struct hash *, hash_hash_func *, hash_less_func *, void *aux)
+	hash_init(&spt->hash_brown,page_hash,page_less,NULL);
 }
 
 /* Copy supplemental page table from src to dst */
@@ -187,4 +220,36 @@ void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
+}
+
+/* 주어진 페이지 *p 에 대한 해시값을 리턴합니다. */
+unsigned
+page_hash (const struct hash_elem *p_, void *aux UNUSED) {
+	const struct page *p = hash_entry(p_, struct page, hash_elem);
+	return hash_bytes(&p->va, sizeof(p->va));
+}
+
+static
+unsigned page_less (const struct hash_elem *a, const struct hash_elem *b, void *aux) {
+	const struct page *p_a = hash_entry(a, struct page, hash_elem);
+	const struct page *p_b = hash_entry(a, struct page, hash_elem);
+	return p_a->va < p_b->va;
+}
+
+bool
+page_insert(struct hash *h, struct page *p) {
+	return hash_insert(h,&p->hash_elem) == NULL ? true : false;
+}
+
+
+/* Finds, removes, and returns an element equal to E in hash
+   table H.  Returns a null pointer if no equal element existed
+   in the table.
+
+   If the elements of the hash table are dynamically allocated,
+   or own resources that are, then it is the caller's
+   responsibility to deallocate them. */
+bool
+page_delete(struct hash *h, struct page *p) {
+	return hash_delete(h,&p->hash_elem) == NULL ? false : true;
 }

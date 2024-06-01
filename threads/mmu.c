@@ -44,7 +44,7 @@ pdpe_walk (uint64_t *pdpe, const uint64_t va, int create) {
 				} else
 					return NULL;
 			} else
-				return NULL;
+				return NULL;리
 		}
 		pte = pgdir_walk (ptov (PTE_ADDR (pdpe[idx])), va, create);
 	}
