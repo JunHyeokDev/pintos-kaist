@@ -19,3 +19,11 @@ struct thread* get_child_process (int pid);
 void remove_child_process(struct thread *cp);
 
 #endif /* userprog/process.h */
+
+
+struct lazy_load_data {
+    struct file *file;
+    off_t ofs;
+    size_t read_bytes;
+    size_t zero_bytes;
+};

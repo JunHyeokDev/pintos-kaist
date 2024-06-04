@@ -1,6 +1,6 @@
 #ifndef THREADS_THREAD_H
 #define THREADS_THREAD_H
-
+#define VM
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
@@ -138,6 +138,8 @@ struct thread {
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
 	struct supplemental_page_table spt;
+	void *stack_bottom;
+	void *user_rsp;
 #endif
 
 	/* Owned by thread.c. */
@@ -188,4 +190,5 @@ void preempt(void);
 bool cmp_thread_priority(const struct list_elem *a_, const struct list_elem *b_,
             void *aux UNUSED);
 void update_donate();
+void print_intr_frame(struct intr_frame *tf);
 #endif /* threads/thread.h */

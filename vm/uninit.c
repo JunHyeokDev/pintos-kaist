@@ -43,6 +43,8 @@ uninit_new (struct page *page, void *va, vm_initializer *init,
 }
 
 /* Initalize the page on first fault */
+/* page_fault() -> vm_try_handle_fault()-> vm_do_claim_page() -> swap_in() -> 
+uninit_initialize() */
 static bool
 uninit_initialize (struct page *page, void *kva) {
 	struct uninit_page *uninit = &page->uninit;

@@ -22,6 +22,12 @@
         "gdt.h": "c",
         "loader.h": "c",
         "palloc.h": "c",
-        "inttypes.h": "c"
+        "inttypes.h": "c",
+        "disk.h": "c",
+        "vm.h": "c",
+        "malloc.h": "c",
+        "vaddr.h": "c",
+        "hash.h": "c",
+        "stdbool.h": "c"
     }
 }

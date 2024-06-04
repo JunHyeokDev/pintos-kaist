@@ -71,8 +71,9 @@ void
 syscall_handler (struct intr_frame *f UNUSED) {
 
 	int syscall_n = f->R.rax; /* 시스템 콜 넘버 */
+	printf("syscall 오나요 ?");
 #ifdef VM
-	thread_current()->rsp = f->rsp;
+	thread_current()->user_rsp = f->rsp;
 #endif
 	switch (syscall_n)
 	{
@@ -172,7 +173,7 @@ exec(const char *cmd_line) {
 		exit(-1); 
 	}
 	strlcpy (fn_copy, cmd_line, PGSIZE);
-	sema_down(&(cur->fork_sema));
+	// sema_down(&(cur->fork_sema));
 
 	if (process_exec(fn_copy) == -1) { 
 		// printf("process_exec failed for: %s\n", cmd_line);

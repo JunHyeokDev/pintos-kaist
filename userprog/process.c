@@ -248,7 +248,7 @@ process_exec (void *f_name) {
 
 	/* We first kill the current context */
 	process_cleanup ();
-
+	// vm_init() 을 해주어야한다. 그런데 어디다?!
 	char *token, *save_ptr;
     char *argv[128];
     int argc = 0;
@@ -257,17 +257,22 @@ process_exec (void *f_name) {
 	}
 	/* And then load the binary */
 	success = load (file_name, &_if);
-	
+	printf("load done \n");
 	/* If load failed, quit. */
 	if (!success)
 		return -1;
 	argument_stack(&argv, argc,&_if);
+
 	//hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true);
+	print_intr_frame(&_if);
 	palloc_free_page (file_name);
+	printf("palloc_free_page 1 \n");
 
 	/* Start switched process. */
 	sema_up(&(cur->parent->fork_sema));
+	printf("do_iret\n");
 	do_iret (&_if);
+	printf("do_iret2 \n");
 	NOT_REACHED ();
 }
 
@@ -316,9 +321,10 @@ process_exit (void) {
 	 * TODO: We recommend you to implement process resource cleanup here. */
 	process_exit_file();
 	palloc_free_multiple(curr->fd_table,FDT_PAGES);
+	process_cleanup ();
+	printf("🐁새끼가 여기있었네?\n");
 	sema_up(&curr->wait_sema);
 	sema_down(&curr->exit_sema);
-	process_cleanup ();
 }
 
 /* Free the current process's resources. */
@@ -510,20 +516,24 @@ load (const char *file_name, struct intr_frame *if_) {
 	}
 
 	/* Set up stack. */
+	printf("setup_stack 오긴 하는거야??\n");
 	if (!setup_stack (if_))
 		goto done;
 
 	/* Start address. */
 	if_->rip = ehdr.e_entry;
+	printf("setup_stack 성공했네?\n");
 
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
 
 	success = true;
+	printf("load 에서 success = true네 ?\n");
 done:
 	/* We arrive here whether the load is successful or not. */
 	sema_up(&t->fork_sema);
 	file_close (file);
+	printf("success 오긴 하는거야??\n");
 	return success;
 }
 
@@ -677,6 +687,35 @@ install_page (void *upage, void *kpage, bool writable) {
 
 static bool
 lazy_load_segment (struct page *page, void *aux) {
+	/* you have to find the file to read the segment from 
+	and eventually read the segment into memory. */
+		
+  /*aux->file = file;
+	aux->ofs = ofs;
+	aux->read_bytes = page_read_bytes;
+	aux->zero_bytes = page_zero_bytes; */
+	struct lazy_load_data *data = (struct lazy_load_data*) aux;
+	struct file *file = data->file;
+	off_t ofs = data->ofs;
+	size_t read_bytes = data->read_bytes;
+	size_t zero_bytes = data->zero_bytes;
+
+	void *kva = page->frame->kva;
+	// file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs) 
+	file_seek(data->file,data->ofs);
+	// if(file_read_at(file,kva,data->read_bytes, ofs) != (int) read_bytes) {
+	// 	printf("lazy_load_segment 여기서 읽기가 잘 안되는건가?? \n");
+	// 	return false;
+	// }
+	if(file_read(data->file,page->frame->kva, data->read_bytes) != (int)(data->read_bytes)) {
+		return false;
+	}
+
+	//if (zero_bytes > 0) {
+	memset(kva + read_bytes, 0 , zero_bytes);
+	//}
+	printf("lazy_load_segment 여기서 리턴 잘 되냐 ?? \n");
+	return true;
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
@@ -702,16 +741,41 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 	ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
 	ASSERT (pg_ofs (upage) == 0);
 	ASSERT (ofs % PGSIZE == 0);
+	printf("load_segment 진입 \n");
+	/*  ELF포맷 파일의 세그먼트를 프로세스 가상주소공간에 탑재하는 함수이다.
+	    이 함수에 프로세스 가상메모리 관련 자료구조를 초기화하는 기능을 추가한다.
+  	    프로세스 가상주소공간에 메모리를 탑재하는 부분을 제거하고, vm_entry 구조체
+	     의 할당, 필드값 초기화, 해시 테이블 삽입을 추가한다. 
 
+		[X] 페이지 할당
+		[X] 데이터 로드
+		[X] 페이지 테이블 생성
+		[O] struct page 생성  -> page == vm_entry 
+		[O] page 필드 초기화
+		[O] page를 해시 테이블에 삽입.
+		
+	*/
 	while (read_bytes > 0 || zero_bytes > 0) {
 		/* Do calculate how to fill this page.
 		 * We will read PAGE_READ_BYTES bytes from FILE
 		 * and zero the final PAGE_ZERO_BYTES bytes. */
-		size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
-		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
+		// Current code calculates the number of bytes to read from a file 
+		size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE; 
+		// the number of bytes to fill with zeros within the main loop
+		size_t page_zero_bytes = PGSIZE - page_read_bytes; 
+
+		/* You may want to create a structure that contains necessary 
+		information for the loading of binary. */
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
+		//void *aux = NULL;
+		// 매개변수 (struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable)
+		struct lazy_load_data *aux = (struct lazy_load_data*)malloc(sizeof(struct lazy_load_data));
+		aux->file = file;
+		aux->ofs = ofs;
+		aux->read_bytes = page_read_bytes;
+		aux->zero_bytes = page_zero_bytes;
+
 		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
 					writable, lazy_load_segment, aux))
 			return false;
@@ -720,7 +784,9 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
+		ofs += page_read_bytes;
 	}
+	printf("load_segment 성공적으로 탈출 \n");
 	return true;
 }
 
@@ -729,12 +795,27 @@ static bool
 setup_stack (struct intr_frame *if_) {
 	bool success = false;
 	void *stack_bottom = (void *) (((uint8_t *) USER_STACK) - PGSIZE);
-
+	printf("setup_stack 진입 했읍니다 ?? \n");
 	/* TODO: Map the stack on stack_bottom and claim the page immediately.
 	 * TODO: If success, set the rsp accordingly.
-	 * TODO: You should mark the page is stack. */
+	 * TODO: You should mark the page is stack. vm_type of vm/vm.h (e.g. VM_MARKER_0) to mark the page. */
 	/* TODO: Your code goes here */
 
+	/* You might need to provide the way to identify the stack. */
+	/* vm_alloc_page 매크로를 사용하면 되겠군. */
+	/* vm_alloc_page(type, upage, writable) */ 
+	/* VM_ANON | VM_MARKER_0 을 사용하여 익명 페이지 + Stack임을 Marking 하자. */
+	if (vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, true)) {
+		printf("vm_alloc_page 잘 끝내긴 하니..?? ??\n ");
+		success = vm_claim_page(stack_bottom);
+		printf("setup_stack 에서 success 잘 되니 ??\n ");
+		if(success) {
+			if_->rsp = USER_STACK;
+			printf("setup_stack 에서 success 잘 되니 ??\n ");
+			// thread_current()->stack_bottom = stack_bottom;
+		}
+	}
+	printf("setup_stack 리턴 잘 되니 ?? \n");
 	return success;
 }
 #endif /* VM */
@@ -861,4 +942,36 @@ void remove_child_process(struct thread *cp) {
 			break;
 		}
 	}
+}
+
+void print_intr_frame(struct intr_frame *tf) {
+    printf("intr_frame at %p\n", (void*)tf);
+    printf("General Purpose Registers:\n");
+    printf("  r15: 0x%016lx\n", tf->R.r15);
+    printf("  r14: 0x%016lx\n", tf->R.r14);
+    printf("  r13: 0x%016lx\n", tf->R.r13);
+    printf("  r12: 0x%016lx\n", tf->R.r12);
+    printf("  r11: 0x%016lx\n", tf->R.r11);
+    printf("  r10: 0x%016lx\n", tf->R.r10);
+    printf("  r9: 0x%016lx\n", tf->R.r9);
+    printf("  r8: 0x%016lx\n", tf->R.r8);
+    printf("  rsi: 0x%016lx\n", tf->R.rsi);
+    printf("  rdi: 0x%016lx\n", tf->R.rdi);
+    printf("  rbp: 0x%016lx\n", tf->R.rbp);
+    printf("  rdx: 0x%016lx\n", tf->R.rdx);
+    printf("  rcx: 0x%016lx\n", tf->R.rcx);
+    printf("  rbx: 0x%016lx\n", tf->R.rbx);
+    printf("  rax: 0x%016lx\n", tf->R.rax);
+    printf("Segment Registers:\n");
+    printf("  es: 0x%04x\n", tf->es);
+    printf("  ds: 0x%04x\n", tf->ds);
+    printf("Interrupt Info:\n");
+    printf("  vec_no: 0x%016lx\n", tf->vec_no);
+    printf("  error_code: 0x%016lx\n", tf->error_code);
+    printf("CPU State:\n");
+    printf("  rip: 0x%016lx\n", tf->rip);
+    printf("  cs: 0x%04x\n", tf->cs);
+    printf("  eflags: 0x%016lx\n", tf->eflags);
+    printf("  rsp: 0x%016lx\n", tf->rsp);
+    printf("  ss: 0x%04x\n", tf->ss);
 }
