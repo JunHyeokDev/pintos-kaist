@@ -37,8 +37,6 @@ int fork(const char *thread_name, struct intr_frame *f);
 
 #define EOF -1
 
-struct lock filesys_lock;
-
 
 /* System call.
  *
@@ -71,7 +69,6 @@ void
 syscall_handler (struct intr_frame *f UNUSED) {
 
 	int syscall_n = f->R.rax; /* 시스템 콜 넘버 */
-	printf("syscall 오나요 ?");
 #ifdef VM
 	thread_current()->user_rsp = f->rsp;
 #endif

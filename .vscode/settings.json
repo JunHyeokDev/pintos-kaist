@@ -28,6 +28,7 @@
         "malloc.h": "c",
         "vaddr.h": "c",
         "hash.h": "c",
-        "stdbool.h": "c"
+        "stdbool.h": "c",
+        "inspect.h": "c"
     }
 }

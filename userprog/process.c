@@ -7,6 +7,7 @@
 #include <string.h>
 #include "userprog/gdt.h"
 #include "userprog/tss.h"
+#include "include/userprog/syscall.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -37,7 +38,7 @@ int process_add_file(struct file *f);
 struct file *process_get_file(int fd);
 void process_close_file(int fd);
 void process_exit(void);
-
+static bool install_page (void *upage, void *kpage, bool writable);
 struct thread* get_child_process (int pid);
 void remove_child_process(struct thread *cp);
 /* General process initializer for initd and other process. */
@@ -62,7 +63,7 @@ process_create_initd (const char *file_name) {
 	argv[1] = "args-single onearg"
 	arg[1]을 file_name으로 받은 상태입니다.
 	*/
-
+	// printf("process_create_initd 여기 오긴함?? \n");
 	char *fn_copy;
 	tid_t tid;
 
@@ -81,7 +82,8 @@ process_create_initd (const char *file_name) {
 	tid = thread_create (token, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
-	sema_down(&(thread_current()->fork_sema));
+	// sema_down(&(thread_current()->fork_sema));
+	// printf("🐁새끼가 process_create_initd 에서 리턴되나 ????\n");
 	return tid;
 }
 
@@ -256,21 +258,19 @@ process_exec (void *f_name) {
 		argv[argc++] = token;
 	}
 	/* And then load the binary */
+	lock_acquire(&filesys_lock);
 	success = load (file_name, &_if);
-	printf("load done \n");
+	lock_release(&filesys_lock);
+	// printf("load done \n");
 	/* If load failed, quit. */
 	if (!success)
 		return -1;
 	argument_stack(&argv, argc,&_if);
 
-	//hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true);
-	print_intr_frame(&_if);
+	// hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true);
 	palloc_free_page (file_name);
-	printf("palloc_free_page 1 \n");
-
+	
 	/* Start switched process. */
-	sema_up(&(cur->parent->fork_sema));
-	printf("do_iret\n");
 	do_iret (&_if);
 	printf("do_iret2 \n");
 	NOT_REACHED ();
@@ -294,11 +294,13 @@ process_wait (tid_t child_tid UNUSED) {
 	struct thread* child = get_child_process(child_tid);
 	/* 예외 처리 발생시-1 리턴*/
 	if (child == NULL) {
+		// printf("🐁 child == NULL 이라고 ??\n");
 		return -1;
 	}
 	/* 자식프로세스가 종료될 때까지 부모 프로세스 대기(세마포어 이용) */
 	// for(int i=0; i< 1000000000; i++) {
 	// }
+	// printf("🐁새끼가 기다린다??\n");
 	sema_down(&child->wait_sema);
 
 	list_remove(&child->child_elem);
@@ -322,9 +324,10 @@ process_exit (void) {
 	process_exit_file();
 	palloc_free_multiple(curr->fd_table,FDT_PAGES);
 	process_cleanup ();
-	printf("🐁새끼가 여기있었네?\n");
 	sema_up(&curr->wait_sema);
+	// printf("🐁새끼가 여기있었네?\n");
 	sema_down(&curr->exit_sema);
+	// printf("🐁새끼가 종료 완료..?\n");
 }
 
 /* Free the current process's resources. */
@@ -516,24 +519,24 @@ load (const char *file_name, struct intr_frame *if_) {
 	}
 
 	/* Set up stack. */
-	printf("setup_stack 오긴 하는거야??\n");
+	// printf("setup_stack 오긴 하는거야??\n");
 	if (!setup_stack (if_))
 		goto done;
 
 	/* Start address. */
 	if_->rip = ehdr.e_entry;
-	printf("setup_stack 성공했네?\n");
+	// printf("setup_stack 성공했네?\n");
 
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
 
 	success = true;
-	printf("load 에서 success = true네 ?\n");
+	// printf("load 에서 success = true네 ?\n");
 done:
 	/* We arrive here whether the load is successful or not. */
-	sema_up(&t->fork_sema);
-	file_close (file);
-	printf("success 오긴 하는거야??\n");
+	// sema_up(&t->fork_sema);
+	//file_close (file);
+	// printf("success 오긴 하는거야??\n");
 	return success;
 }
 
@@ -702,19 +705,20 @@ lazy_load_segment (struct page *page, void *aux) {
 
 	void *kva = page->frame->kva;
 	// file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs) 
-	file_seek(data->file,data->ofs);
+	file_seek(file,ofs);
 	// if(file_read_at(file,kva,data->read_bytes, ofs) != (int) read_bytes) {
 	// 	printf("lazy_load_segment 여기서 읽기가 잘 안되는건가?? \n");
 	// 	return false;
 	// }
-	if(file_read(data->file,page->frame->kva, data->read_bytes) != (int)(data->read_bytes)) {
+	if(file_read(file,kva, read_bytes) != (int)(read_bytes)) {
+		palloc_free_page(kva);
 		return false;
 	}
 
 	//if (zero_bytes > 0) {
-	memset(kva + read_bytes, 0 , zero_bytes);
+	memset(page->frame->kva + data->read_bytes, 0 , data->zero_bytes);
 	//}
-	printf("lazy_load_segment 여기서 리턴 잘 되냐 ?? \n");
+	// printf("lazy_load_segment 여기서 리턴 잘 되냐 ?? \n");
 	return true;
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
@@ -741,7 +745,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 	ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
 	ASSERT (pg_ofs (upage) == 0);
 	ASSERT (ofs % PGSIZE == 0);
-	printf("load_segment 진입 \n");
+	// printf("load_segment 진입 \n");
 	/*  ELF포맷 파일의 세그먼트를 프로세스 가상주소공간에 탑재하는 함수이다.
 	    이 함수에 프로세스 가상메모리 관련 자료구조를 초기화하는 기능을 추가한다.
   	    프로세스 가상주소공간에 메모리를 탑재하는 부분을 제거하고, vm_entry 구조체
@@ -786,7 +790,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		upage += PGSIZE;
 		ofs += page_read_bytes;
 	}
-	printf("load_segment 성공적으로 탈출 \n");
+	// printf("load_segment 성공적으로 탈출 \n");
 	return true;
 }
 
@@ -795,7 +799,6 @@ static bool
 setup_stack (struct intr_frame *if_) {
 	bool success = false;
 	void *stack_bottom = (void *) (((uint8_t *) USER_STACK) - PGSIZE);
-	printf("setup_stack 진입 했읍니다 ?? \n");
 	/* TODO: Map the stack on stack_bottom and claim the page immediately.
 	 * TODO: If success, set the rsp accordingly.
 	 * TODO: You should mark the page is stack. vm_type of vm/vm.h (e.g. VM_MARKER_0) to mark the page. */
@@ -805,17 +808,13 @@ setup_stack (struct intr_frame *if_) {
 	/* vm_alloc_page 매크로를 사용하면 되겠군. */
 	/* vm_alloc_page(type, upage, writable) */ 
 	/* VM_ANON | VM_MARKER_0 을 사용하여 익명 페이지 + Stack임을 Marking 하자. */
-	if (vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, true)) {
-		printf("vm_alloc_page 잘 끝내긴 하니..?? ??\n ");
+	if (vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, 1)) {
 		success = vm_claim_page(stack_bottom);
-		printf("setup_stack 에서 success 잘 되니 ??\n ");
 		if(success) {
 			if_->rsp = USER_STACK;
-			printf("setup_stack 에서 success 잘 되니 ??\n ");
-			// thread_current()->stack_bottom = stack_bottom;
+			thread_current()->stack_bottom = stack_bottom;
 		}
 	}
-	printf("setup_stack 리턴 잘 되니 ?? \n");
 	return success;
 }
 #endif /* VM */
@@ -944,34 +943,3 @@ void remove_child_process(struct thread *cp) {
 	}
 }
 
-void print_intr_frame(struct intr_frame *tf) {
-    printf("intr_frame at %p\n", (void*)tf);
-    printf("General Purpose Registers:\n");
-    printf("  r15: 0x%016lx\n", tf->R.r15);
-    printf("  r14: 0x%016lx\n", tf->R.r14);
-    printf("  r13: 0x%016lx\n", tf->R.r13);
-    printf("  r12: 0x%016lx\n", tf->R.r12);
-    printf("  r11: 0x%016lx\n", tf->R.r11);
-    printf("  r10: 0x%016lx\n", tf->R.r10);
-    printf("  r9: 0x%016lx\n", tf->R.r9);
-    printf("  r8: 0x%016lx\n", tf->R.r8);
-    printf("  rsi: 0x%016lx\n", tf->R.rsi);
-    printf("  rdi: 0x%016lx\n", tf->R.rdi);
-    printf("  rbp: 0x%016lx\n", tf->R.rbp);
-    printf("  rdx: 0x%016lx\n", tf->R.rdx);
-    printf("  rcx: 0x%016lx\n", tf->R.rcx);
-    printf("  rbx: 0x%016lx\n", tf->R.rbx);
-    printf("  rax: 0x%016lx\n", tf->R.rax);
-    printf("Segment Registers:\n");
-    printf("  es: 0x%04x\n", tf->es);
-    printf("  ds: 0x%04x\n", tf->ds);
-    printf("Interrupt Info:\n");
-    printf("  vec_no: 0x%016lx\n", tf->vec_no);
-    printf("  error_code: 0x%016lx\n", tf->error_code);
-    printf("CPU State:\n");
-    printf("  rip: 0x%016lx\n", tf->rip);
-    printf("  cs: 0x%04x\n", tf->cs);
-    printf("  eflags: 0x%016lx\n", tf->eflags);
-    printf("  rsp: 0x%016lx\n", tf->rsp);
-    printf("  ss: 0x%04x\n", tf->ss);
-}

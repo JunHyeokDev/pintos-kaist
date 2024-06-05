@@ -20,7 +20,7 @@ void remove_child_process(struct thread *cp);
 
 #endif /* userprog/process.h */
 
-
+static bool install_page (void *upage, void *kpage, bool writable);
 struct lazy_load_data {
     struct file *file;
     off_t ofs;

@@ -50,7 +50,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		vm_initializer *init, void *aux) {
 
 	ASSERT (VM_TYPE(type) != VM_UNINIT)
-	printf("vm_alloc_page_with_initializer 진입 \n");
+	// printf("vm_alloc_page_with_initializer 진입 \n");
 	struct supplemental_page_table *spt = &thread_current ()->spt;
 	bool ret = false;
 
@@ -83,17 +83,11 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		/* 여기서 넣어주는 init이 lazy_load_segment()임. process.c 에 있음. */
 		uninit_new(page,upage,init,type,aux,initializer);
 		page->writable = writable;
-		printf("vm_alloc_page_with_initializer 성공적으로 탈출 \n");
 		ret = spt_insert_page(spt,page);
-		if (ret) {
-			printf( " spt_insert_page(spt,page); is true \n");
-		} else {
-			printf( " spt_insert_page(spt,page); is false \n");
-		}
 		return ret;
 	}
 err:
-	printf("vm_alloc_page_with_initializer err!!!! \n");
+	// printf("vm_alloc_page_with_initializer err!!!! \n");
 	return false;
 }
 
@@ -104,24 +98,7 @@ spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
 	//  인자로 받은 vaddr에 해당하는 vm_entry를 검색 후 반환
 	//  가상 메모리 주소에 해당하는 페이지 번호 추출 (pg_round_down())
 	//  hash_find() 함수를 이용하여 vm_entry 검색 후 반환
-	// struct page page;
-	// struct hash_elem *e;
-	// //page.va = pg_round_down(va);  이거 써야하는거야 말아야하는거야??
-	// page.va = va; 
-	// printf("spt_find_page 잘 오나요? \n");
 
-	// e = hash_find(&spt->hash_brown,&page.hash_elem);
-	// /* 우린 분명 page.va = va; 를 업데이트 하였다. 그런데 어떻게 해서 위의 hash_find 이 동작하는걸까? */
-	// /* va를 건내주고, bucket 리스트에 있는 hash들을 순회하며 va가 같은 hash_elem을 가져온다. */
-	// /* 사실 elem에 아무것도 설정되지 않아서 이상한 코드처럼 보이지만, 내부 find elem에서 va를 비교한 후 elem을 리턴한다.*/
-	// printf("spt_find_page 에서 hash_find 잘 찾았나요? \n");
-	
-	// if (e==NULL) {
-	// 	printf("spt_find_page 에서 hash_find 했는데 e가 Null.. ?? \n");
-	// 	return NULL; 
-	// } 
-	// printf("spt_find_page 에서 hash_entry 가요 ?? \n");
-	// return hash_entry(e,struct page,hash_elem);		
 	struct page *page = NULL;
     /* TODO: Fill this function. */
 	page = (struct page *)malloc(sizeof(struct page));
@@ -130,6 +107,9 @@ spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
     // va에 해당하는 hash_elem 찾기
     page->va = pg_round_down(va);
     e = hash_find(&spt->hash_brown, &page->hash_elem);
+	// /* 우린 분명 page.va = va; 를 업데이트 하였다. 그런데 어떻게 해서 위의 hash_find 이 동작하는걸까? */
+	// /* va를 건내주고, bucket 리스트에 있는 hash들을 순회하며 va가 같은 hash_elem을 가져온다. */
+	// /* 사실 elem에 아무것도 설정되지 않아서 이상한 코드처럼 보이지만, 내부 find elem에서 va를 비교한 후 elem을 리턴한다.*/
 	free(page);
     // 있으면 e에 해당하는 페이지 반환
     return e != NULL ? hash_entry(e, struct page, hash_elem) : NULL;
@@ -191,21 +171,16 @@ vm_evict_frame (void) {
  * space.*/
 static struct frame *
 vm_get_frame (void) {
-	struct frame *frame = NULL;
+	struct frame *frame = (struct frame *)malloc(sizeof(struct frame));;
 	/* TODO: Fill this function. */
-	printf("get frame 잘 오나ㅣ요???\n");
-	void *kva = palloc_get_page(PAL_USER);
-	printf("get frame 잘 palloc 잘되나요 ???\n");
+	frame->kva = palloc_get_page(PAL_USER);
 
-	if(kva == NULL) {
+	if(frame->kva == NULL) {
 		PANIC("todolater"); // 추방알고리즘 
 	} 
-	frame = (struct frame *)malloc(sizeof(struct frame));
 	/* 밑에 dealloc 함수가 있어서, free는 신경안써도 되는거같다. */
-	frame->kva = kva;
 	frame->page = NULL; // 이거 안해주니 에러남..;
-
-	//list_push_back(&frame_list,&frame->frame_elem);
+	list_push_back(&frame_list,&frame->frame_elem);
 	ASSERT (frame != NULL);
 	ASSERT (frame->page == NULL);
 	return frame;
@@ -231,7 +206,7 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 		bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
 	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
 	struct page *page = NULL;
-	printf("vm_try_handle_fault 오는거야? \n");
+	// printf("vm_try_handle_fault 오는거야? \n");
 
 	/* read only 페이지에 대한 접근이 아닐 경우 (not_present 참조)*/
 	/* 페이지 폴트가 일어난 주소에 대한 vm_entry 구조체 탐색 */
@@ -263,10 +238,10 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 		return false;
 	}
 
-	// void *rsp = f->rsp;
-	// if (is_kernel_vaddr(f->rsp)) { // 만약 커널영역이라면, thread에 저장한 user_rsp를 사용.
-	// 	rsp = thread_current()->user_rsp;
-	// }
+	void *rsp = f->rsp;
+	if (is_kernel_vaddr(f->rsp)) { // 만약 커널영역이라면, thread에 저장한 user_rsp를 사용.
+		rsp = thread_current()->user_rsp;
+	}
 
 	/* not_present 가 true인 경우, 물리페이지가 없는 것이다. */
 	if (not_present) {
@@ -274,24 +249,24 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 		/* 1. Fault Address가 현재 스택 포인터 위에 있어야 함 		     addr < USER_STACK */
 		/* 2. Fault Address가 스택의 최대 크기 제한을 벗어나지 않아야 함    addr >= USER_STACK - 1MB && 1MB = 2^20 bytes	*/
 		/* 3. PUSH 명령에 의해 발생한 경우를 처리  						 addr == rsp - 8 */
-		// if (rsp - 8 <= addr && addr <= USER_STACK &&  /* 1,3 번 케이스를 다룸 */
-		// 	addr >= USER_STACK - (1<< 20) ) { 		  /* 2번 케이스를 다룸 */
-		// 	/* On many GNU/Linux systems, the default limit is 8 MB. For this project,
-		//    	you should limit the stack size to be 1MB at maximum. */
-		// 	vm_stack_growth(addr);
-		// 	return true;
-		// }
+		if (rsp - 8 <= addr && addr <= USER_STACK &&  /* 1,3 번 케이스를 다룸 */
+			addr >= USER_STACK - (1<< 20) ) { 		  /* 2번 케이스를 다룸 */
+			/* On many GNU/Linux systems, the default limit is 8 MB. For this project,
+		   	you should limit the stack size to be 1MB at maximum. */
+			vm_stack_growth(addr);
+		}
+
 		page = spt_find_page(spt,addr);
-		if (write == true && page->writable == false) {
+		if (write == 1 && page->writable == 0) {
 			return false;
 		}
 		if (page == NULL) {
 			return false;
 		}
-		printf("vm_try_handle_fault 잘 나가는거야?? \n");
+		// printf("vm_try_handle_fault 잘 나가는거야?? \n");
 		return vm_do_claim_page(page); 
  	}
-	printf("vm_try_handle_fault 에러나는거야? \n");
+	// printf("vm_try_handle_fault 에러나는거야? \n");
 	return false;
 }
 
@@ -308,11 +283,9 @@ bool
 vm_claim_page (void *va UNUSED) {
 	struct page *page = NULL;
 	/* TODO: Fill this function */
-	printf("vm_claim_page 잘 오나요? \n");
+	// printf("vm_claim_page 잘 오나요? \n");
 	page = spt_find_page(&thread_current()->spt, va);
-	printf("spt_find_page 잘 나왔나요 ?? \n");
 	if (page == NULL) {
-		printf("vm_claim_page page 에러 떳나요?? \n");
 		return false;
 	}
 	return vm_do_claim_page (page);
@@ -322,7 +295,7 @@ vm_claim_page (void *va UNUSED) {
 static bool
 vm_do_claim_page (struct page *page) {
 	struct frame *frame = vm_get_frame ();
-	printf("vm_do_claim_page 잘 오나요? \n");
+	// printf("vm_do_claim_page 잘 오나요? \n");
 
 	/* Set links */
 	// 해당 페이지와 물리 프레임을 연결.
@@ -338,7 +311,6 @@ vm_do_claim_page (struct page *page) {
 	// 	return false; 
 	// }
 	pml4_set_page (t->pml4, page->va, frame->kva, page->writable);
-	printf("vm_do_claim_page -> pml4_set_page 잘 오나요? \n");
 
 	return swap_in (page, frame->kva);
 }
@@ -356,7 +328,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		struct supplemental_page_table *src UNUSED) {
 	/* hash.h  의 Iteration 파트를 참조하자. */
 	/* A hash table iterator. */
-	printf("설마 supplemental_page_table_copy 오나? \n");
+	// printf("설마 supplemental_page_table_copy 오나? \n");
 	struct hash_iterator i;
 	hash_first(&i,&src->hash_brown);
 	/* Advances I to the next element in the hash table and returns
@@ -371,7 +343,18 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		vm_initializer *init = src_page->uninit.init;
 		void *aux = src_page->uninit.aux;
 
-		vm_alloc_page_with_initializer(VM_ANON,upage,writable,init,aux);
+		if (type == VM_UNINIT) {
+			vm_alloc_page_with_initializer(VM_ANON,upage,writable,init,aux);
+			continue;
+		}
+
+		if (!vm_alloc_page(type, upage, writable)) {
+			return false;
+		}
+
+		if (!vm_claim_page(upage)) {
+			return false;
+		}
 
 		struct page *dst_page = spt_find_page(dst,upage);
 		memcpy(dst_page->frame->kva, src_page->frame->kva,PGSIZE);
