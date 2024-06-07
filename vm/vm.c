@@ -5,7 +5,7 @@
 #include "vm/inspect.h"
 #include "include/lib/kernel/hash.h"
 #include "include/threads/vaddr.h"
-
+#include "userprog/process.h"
 struct list frame_list;
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
@@ -87,7 +87,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		return ret;
 	}
 err:
-	// printf("vm_alloc_page_with_initializer err!!!! \n");
+	printf("vm_alloc_page_with_initializer");
 	return false;
 }
 
@@ -130,6 +130,7 @@ spt_insert_page (struct supplemental_page_table *spt UNUSED,
 
 void
 spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
+	hash_delete(&spt->hash_brown, &page->hash_elem);
 	vm_dealloc_page (page);
 	return true;
 }
@@ -177,7 +178,7 @@ vm_get_frame (void) {
 
 	if(frame->kva == NULL) {
 		PANIC("todolater"); // 추방알고리즘 
-	} 
+	}
 	/* 밑에 dealloc 함수가 있어서, free는 신경안써도 되는거같다. */
 	frame->page = NULL; // 이거 안해주니 에러남..;
 	list_push_back(&frame_list,&frame->frame_elem);
@@ -254,6 +255,7 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 			/* On many GNU/Linux systems, the default limit is 8 MB. For this project,
 		   	you should limit the stack size to be 1MB at maximum. */
 			vm_stack_growth(addr);
+			//return true;
 		}
 
 		page = spt_find_page(spt,addr);
@@ -328,7 +330,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		struct supplemental_page_table *src UNUSED) {
 	/* hash.h  의 Iteration 파트를 참조하자. */
 	/* A hash table iterator. */
-	// printf("설마 supplemental_page_table_copy 오나? \n");
+	printf("설마 supplemental_page_table_copy 오나? \n");
 	struct hash_iterator i;
 	hash_first(&i,&src->hash_brown);
 	/* Advances I to the next element in the hash table and returns
@@ -336,6 +338,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
    	   are returned in arbitrary order.  */
 	while(hash_next(&i))  {
 		struct page *src_page = hash_entry(hash_cur(&i), struct page, hash_elem);
+		printf("설마 supplemental_page_table_copy 1? \n");
 
 		enum vm_type type = page_get_type(src_page);
 		void *upage = src_page->va;
@@ -348,17 +351,39 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 			continue;
 		}
 
+		else if (type == VM_FILE) {
+			struct lazy_load_data *aux_args = (struct lazy_load_data *) malloc(sizeof(struct lazy_load_data));
+            aux_args->file = src_page->file.file;
+            aux_args->ofs = src_page->file.ofs;
+            aux_args->read_bytes = src_page->file.read_bytes;
+            aux_args->zero_bytes = src_page->file.zero_bytes;
+
+            if (!vm_alloc_page_with_initializer(type, upage, writable, NULL, aux_args))
+				printf("설마 supplemental_page_table_copy VM_FILE 실패? \n");
+                return false;
+            struct page *file_page = spt_find_page(dst, upage);
+            file_backed_initializer(file_page, type, NULL);
+            file_page->frame = src_page->frame;
+            pml4_set_page(thread_current()->pml4, file_page->va, src_page->frame->kva, src_page->writable);
+			printf("설마 supplemental_page_table_copy 2? \n");
+            continue;
+		}
+
 		if (!vm_alloc_page(type, upage, writable)) {
+			printf("설마 supplemental_page_table_copy 3? \n");
 			return false;
 		}
+		printf("설마 supplemental_page_table_copy 4? \n");
 
 		if (!vm_claim_page(upage)) {
 			return false;
 		}
+		printf("설마 supplemental_page_table_copy 5? \n");
 
 		struct page *dst_page = spt_find_page(dst,upage);
 		memcpy(dst_page->frame->kva, src_page->frame->kva,PGSIZE);
 	}
+	printf("설마 supplemental_page_table_copy 성공리턴??? \n");
 	return true;
 }
 

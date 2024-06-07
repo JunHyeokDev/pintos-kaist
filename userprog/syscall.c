@@ -34,6 +34,8 @@ unsigned tell(int fd);
 int exec(const char *cmd_line);
 int wait(int pid);
 int fork(const char *thread_name, struct intr_frame *f);
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap(void *addr);
 
 #define EOF -1
 
@@ -69,6 +71,7 @@ void
 syscall_handler (struct intr_frame *f UNUSED) {
 
 	int syscall_n = f->R.rax; /* 시스템 콜 넘버 */
+	// printf("시스콜 넘버가 뭐죠 ? %d \n",syscall_n);
 #ifdef VM
 	thread_current()->user_rsp = f->rsp;
 #endif
@@ -116,6 +119,12 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	case SYS_CLOSE:
 		close(f->R.rdi);
 		break;
+	case SYS_MMAP:
+        f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+        break;
+	case SYS_MUNMAP:
+        munmap(f->R.rdi);
+        break;
 	default:
         exit(-1);
         break;
@@ -123,7 +132,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 }
 
 void is_valid_addr(void *addr) {
-	if (addr == NULL || !is_user_vaddr(addr) || pml4_get_page(thread_current()->pml4, addr) == NULL) {
+	if (addr == NULL || !is_user_vaddr(addr)) {
 		exit(-1);
 	}
 }
@@ -292,6 +301,46 @@ int write (int fd, const void *buffer, unsigned size) {
 }
 
 int fork(const char *thread_name, struct intr_frame *f) {
+	printf("fork 시스템콜진입 \n");
 	is_valid_addr(thread_name);
 	return process_fork(thread_name, f);
+}
+
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset)
+{
+	/* Fail Condition */
+	/* 1. when file opened as fd has a length of zero bytes.*/
+    struct file *f = process_get_file(fd);
+    if (f == NULL)
+        return NULL;
+	if (file_length(f) == 0 || (int)length <= 0)
+        return NULL;
+	
+	/* 2. addr is not page-aligned or overlaps any existing set of mapped pages
+		including the stack or pages mapped at executable load time */
+	/* 3. addr is null */
+    if (addr != pg_round_down(addr)) {
+		return NULL;
+	}
+	if (addr == NULL) {
+        return NULL;
+	}
+
+	/* 유저 가상 메모리 주소 범위 확인 */
+    if (!is_user_vaddr(addr) || !is_user_vaddr(addr + length))
+        return NULL;
+	/* 오프셋으로 정렬된 것인지 확인 */
+	if (offset != pg_round_down(offset)) {
+		return NULL;
+	}
+	/* 페이지 유무 확인 */
+    if (spt_find_page(&thread_current()->spt, addr))
+        return NULL;
+
+    return do_mmap(addr, length, writable, f, offset);
+}
+
+void munmap(void *addr)
+{
+    do_munmap(addr);
 }

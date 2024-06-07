@@ -110,7 +110,7 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 	/* intr frame 복사 */
 	struct thread *cur = thread_current();
 	memcpy(&cur->copied_if, if_, sizeof(struct intr_frame));
-	
+	printf("process_fork 진입 \n");
 	tid_t tid = thread_create (name,
 			PRI_DEFAULT, __do_fork, cur);
 	if (tid == TID_ERROR) // Error handling
@@ -122,8 +122,10 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 	sema_down(&child->fork_sema);
 
 	if (child->exit_code == -1) {
+		printf("process_fork exit code -1 ?? \n");
 		return TID_ERROR;
 	}
+	printf("process_fork 성공적 리턴. ?? \n");
 	return tid;
 }
 
@@ -183,25 +185,31 @@ __do_fork (void *aux) {
 	struct thread *current = thread_current ();
 	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */
 	struct intr_frame *parent_if;
+	printf("Do_fork 1?\n");
 
 	parent_if = &parent->copied_if; // parent 자체가 fork를 실행한 쓰레드, 즉 복사본을 위에서 fork 하기 전에 저장함.
 	bool succ = true;
 	/* 1. Read the cpu context to local stack. */
 	memcpy (&if_, parent_if, sizeof (struct intr_frame));
 	if_.R.rax = 0;
+	printf("Do_fork 2?\n");
 
 	/* 2. Duplicate PT */
 	current->pml4 = pml4_create();
 	if (current->pml4 == NULL) {
 		goto error;
 	}
+	printf("Do_fork 3?\n");
 
 	process_activate (current);
 #ifdef VM
 	supplemental_page_table_init (&current->spt);
+	printf("Do_fork 4?\n");
 	if (!supplemental_page_table_copy (&current->spt, &parent->spt))
+		printf("goto error???\n");
 		goto error;
 #else
+	printf("Do_fork 4?\n");
 
 	if (!pml4_for_each (parent->pml4, duplicate_pte, parent)) {
 		goto error;
@@ -223,12 +231,14 @@ __do_fork (void *aux) {
 	current->cur_fd = parent->cur_fd;
 	sema_up(&current->fork_sema);
 	process_init ();
+	printf("Do_fork 성공?\n");
 
 	/* Finally, switch to the newly created process. */
 	if (succ)
 		do_iret (&if_);
 error:
 	current->exit_code = TID_ERROR;
+	printf("Do_fork 실패함?\n");
 	sema_up(&current->fork_sema);
 	exit(TID_ERROR); // thread_exit 대신 exit
 }
@@ -300,13 +310,13 @@ process_wait (tid_t child_tid UNUSED) {
 	/* 자식프로세스가 종료될 때까지 부모 프로세스 대기(세마포어 이용) */
 	// for(int i=0; i< 1000000000; i++) {
 	// }
-	// printf("🐁새끼가 기다린다??\n");
+	printf("🐁새끼가 기다린다??\n");
 	sema_down(&child->wait_sema);
 
 	list_remove(&child->child_elem);
 
 	sema_up(&child->exit_sema);
-
+	printf("🐁 process_exit에서 탈출..??\n");
 	int ret = child->exit_code;
 	return ret;
 
@@ -325,9 +335,9 @@ process_exit (void) {
 	palloc_free_multiple(curr->fd_table,FDT_PAGES);
 	process_cleanup ();
 	sema_up(&curr->wait_sema);
-	// printf("🐁새끼가 여기있었네?\n");
+	printf("🐁새끼왜죽어???\n");
 	sema_down(&curr->exit_sema);
-	// printf("🐁새끼가 종료 완료..?\n");
+	printf("🐁새끼가 종료 완료..?\n");
 }
 
 /* Free the current process's resources. */
@@ -337,6 +347,7 @@ process_cleanup (void) {
 
 #ifdef VM
 	supplemental_page_table_kill (&curr->spt);
+	// hash_destroy(&curr->spt.hash_brown, NULL);
 #endif
 
 	uint64_t *pml4;
@@ -703,22 +714,14 @@ lazy_load_segment (struct page *page, void *aux) {
 	size_t read_bytes = data->read_bytes;
 	size_t zero_bytes = data->zero_bytes;
 
-	void *kva = page->frame->kva;
 	// file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs) 
 	file_seek(file,ofs);
-	// if(file_read_at(file,kva,data->read_bytes, ofs) != (int) read_bytes) {
-	// 	printf("lazy_load_segment 여기서 읽기가 잘 안되는건가?? \n");
-	// 	return false;
-	// }
-	if(file_read(file,kva, read_bytes) != (int)(read_bytes)) {
-		palloc_free_page(kva);
+	if(file_read(file,page->frame->kva, read_bytes) != (int)(read_bytes)) {
+		palloc_free_page(page->frame->kva);
 		return false;
 	}
 
-	//if (zero_bytes > 0) {
-	memset(page->frame->kva + data->read_bytes, 0 , data->zero_bytes);
-	//}
-	// printf("lazy_load_segment 여기서 리턴 잘 되냐 ?? \n");
+	memset(page->frame->kva + read_bytes, 0 , zero_bytes);
 	return true;
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */

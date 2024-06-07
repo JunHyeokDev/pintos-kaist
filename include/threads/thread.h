@@ -140,6 +140,7 @@ struct thread {
 	struct supplemental_page_table spt;
 	void *stack_bottom;
 	void *user_rsp;
+	int page_cnt;
 #endif
 
 	/* Owned by thread.c. */
