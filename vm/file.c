@@ -33,11 +33,12 @@ file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
 	such as the file that is backing the memory.*/
 	struct file_page *file_page = &page->file;
 
-	struct lazy_load_data *data = (struct lazy_load_data*)page->uninit.aux;
+	struct file_page *data = (struct file_page*)page->uninit.aux;
 	file_page->file = data->file;
 	file_page->ofs = data->ofs;
 	file_page->read_bytes = data->read_bytes;
 	file_page->zero_bytes = data->zero_bytes;
+	// free(data);
 	return true;
 }
 
@@ -79,52 +80,54 @@ file_backed_destroy (struct page *page) {
 void *
 do_mmap (void *addr, size_t length, int writable,
 		struct file *file, off_t offset) {
-
+	// printf("addr: %p length: %d writable: %d file: %p offset: %d\n", addr, length, writable, file, offset);
 	void *original_addr = addr;
 	struct file *f = file_reopen(file); // 나중에 여러번 open 될 경우를 대비해서 다른 참조를 얻도록함.
-    if (f == NULL) { return NULL; }
-
-    size_t page_cnt = (length + PGSIZE - 1) / PGSIZE;
+    if (f == NULL) { 
+		return NULL; }
+    int page_cnt = (length + PGSIZE - 1) / PGSIZE;
 	// malloc랩을 기억하는가? 아마 위와 비슷한 식을 봤을 것이다..
 
 	// 파일은 작은데, 읽어야할 길이가 매우 크다면, 그냥 파일 길이만큼 읽으면 될 것이다.
     size_t read_bytes = length < file_length(f) ? length : file_length(f);  
     size_t zero_bytes = (PGSIZE - (read_bytes % PGSIZE));
-
 	ASSERT (pg_ofs (addr) == 0); // It must fail if addr is not page-aligned 
 	ASSERT (offset % PGSIZE == 0); // offset이 페이지 단위로 깔끔하게 나뉘어야 한다.
 	ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0); // read & zero 길이가 페이지단위로 정렬 되어있는지 체크
-
-	for (size_t i = 0; i < page_cnt; i++) {
+	
+	// 🐁 for (size_t i = 0; i < page_cnt; i++) { 이론상 page 수 만큼 for문을 돌면 될 것 같은데.... 실패한다..! 🐁 
+	while (read_bytes >0 || zero_bytes > 0) {
 		// Current code calculates the number of bytes to read from a file 
 		size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE; 
 		// the number of bytes to fill with zeros within the main loop
-		size_t page_zero_bytes = PGSIZE - page_read_bytes; 
+		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-		struct lazy_load_data *aux = (struct lazy_load_data*)malloc(sizeof(struct lazy_load_data));
+		struct file_page *aux = (struct file_page*)malloc(sizeof(struct file_page));
         aux->file = f;
         aux->ofs = offset;
         aux->read_bytes = page_read_bytes;
         aux->zero_bytes = page_zero_bytes;
-
         // vm_alloc_page_with_initializer를 호출하여 대기 중인 객체를 생성합니다.
 		// file_backed_initializer (struct page *page, enum vm_type type, void *kva)
-		if (!vm_alloc_page_with_initializer (VM_ANON, addr,
-					writable, file_backed_initializer, aux)){
+		if (!vm_alloc_page_with_initializer (VM_FILE, addr,
+					writable, lazy_load_file, aux)){
             free(aux);
-            file_close(f);
+            // file_close(f);
 			return NULL;
 		}
 
+		// 해당 식을 while문 위에서 작성하면 틀린다.. 난 이해할 수 없어..
+		// 🐁 Page의 갯수를 저장하는 코드, 그런데 해당 코드를 while문 밖에서 선언했을 때 mmap이 실패한다면 여러분들은 믿으시겠습니까??? 🐁
+		struct page *page = spt_find_page(&thread_current()->spt, addr);
+		page->page_cnt = page_cnt;
+
         /* Advance. */
         read_bytes -= page_read_bytes;
-		// zero_bytes -= page_zero_bytes;
+		zero_bytes -= page_zero_bytes;
         addr += PGSIZE;
         offset += page_read_bytes;
     }
-
-	struct thread *cur = thread_current();
-	cur->page_cnt = page_cnt;
+	/* If successful, this function returns the virtual address where the file is mapped. */
 	return original_addr;
 }
 
@@ -134,12 +137,12 @@ do_munmap (void *addr) {
 	// 보충페이지
 	// 페이지 찾기
 	// 순회하며 파괴, destroy();
-	struct thread *cur = thread_current();
 	struct supplemental_page_table *spt = &(thread_current()->spt);
 	struct page* page = spt_find_page(spt,addr);
 	// 몇개를 지워야하지??
-
-	int iter = cur->page_cnt;
+	// The entire file is mapped into consecutive virtual pages starting at addr
+	// 따라서 이렇게 지워주면 되려나?
+	int iter = page->page_cnt;
 	for (int i=0; i< iter; i++) {
 		if (page != NULL) {
 			destroy(page);
@@ -147,4 +150,27 @@ do_munmap (void *addr) {
 		addr+=PGSIZE;
 		page = spt_find_page(spt,addr);
 	}
+}
+
+bool
+lazy_load_file (struct page *page, void *aux) {
+	/* you have to find the file to read the segment from 
+	and eventually read the segment into memory. */
+		
+	struct file_page *data = (struct file_page*) aux;
+	struct file *file = data->file;
+	off_t ofs = data->ofs;
+	size_t read_bytes = data->read_bytes;
+	size_t zero_bytes = data->zero_bytes;
+	// file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs) 
+	file_seek(file,ofs);
+	if(file_read(file,page->frame->kva, read_bytes) != (int)(read_bytes)) {
+		palloc_free_page(page->frame->kva);
+		return false;
+	}
+	memset(page->frame->kva + read_bytes, 0 , zero_bytes);
+	return true;
+	/* TODO: Load the segment from the file */
+	/* TODO: This called when the first page fault occurs on address VA. */
+	/* TODO: VA is available when calling this function. */
 }

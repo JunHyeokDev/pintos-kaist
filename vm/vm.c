@@ -6,6 +6,7 @@
 #include "include/lib/kernel/hash.h"
 #include "include/threads/vaddr.h"
 #include "userprog/process.h"
+#include <string.h>
 struct list frame_list;
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
@@ -180,7 +181,7 @@ vm_get_frame (void) {
 		PANIC("todolater"); // 추방알고리즘 
 	}
 	/* 밑에 dealloc 함수가 있어서, free는 신경안써도 되는거같다. */
-	frame->page = NULL; // 이거 안해주니 에러남..;
+	frame->page = NULL; // ASSERT (frame->page == NULL); 가 있으므로, NULL로 초기화 해줍시다!
 	list_push_back(&frame_list,&frame->frame_elem);
 	ASSERT (frame != NULL);
 	ASSERT (frame->page == NULL);
@@ -194,11 +195,16 @@ vm_stack_growth (void *addr UNUSED) {
 	vm_alloc_page(VM_ANON | VM_MARKER_0, pg_round_down(addr), true);
 	// 이거랑 위랑 똑같음. 매크로써서 인터페이스(?) 처럼 구현한거같음.
 	// vm_alloc_page_with_initializer(VM_ANON | VM_MARKER_0, stack_bottom, true, NULL, NULL) 
+	// page fault는 rsp가 미할당된 stack 영역에 memory access를 시도하는 경우
+	// (push/pop, indirect memory ref, call/ret) 등 발생합니다.
 }
 
 /* Handle the fault on write_protected page */
 static bool
 vm_handle_wp (struct page *page UNUSED) {
+	if (page->writable == false) {
+		return false;
+	}
 }
 
 /* Return true on success */
@@ -238,11 +244,7 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 	if (addr == NULL || is_kernel_vaddr(addr)) {
 		return false;
 	}
-
-	void *rsp = f->rsp;
-	if (is_kernel_vaddr(f->rsp)) { // 만약 커널영역이라면, thread에 저장한 user_rsp를 사용.
-		rsp = thread_current()->user_rsp;
-	}
+	void *rsp = user ? f->rsp : thread_current()->user_rsp;
 
 	/* not_present 가 true인 경우, 물리페이지가 없는 것이다. */
 	if (not_present) {
@@ -255,20 +257,19 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 			/* On many GNU/Linux systems, the default limit is 8 MB. For this project,
 		   	you should limit the stack size to be 1MB at maximum. */
 			vm_stack_growth(addr);
-			//return true;
 		}
 
 		page = spt_find_page(spt,addr);
-		if (write == 1 && page->writable == 0) {
-			return false;
-		}
 		if (page == NULL) {
 			return false;
 		}
-		// printf("vm_try_handle_fault 잘 나가는거야?? \n");
+		if (write) {
+			if (vm_handle_wp(page)) {
+				return false;
+			}
+		}
 		return vm_do_claim_page(page); 
  	}
-	// printf("vm_try_handle_fault 에러나는거야? \n");
 	return false;
 }
 
@@ -297,7 +298,6 @@ vm_claim_page (void *va UNUSED) {
 static bool
 vm_do_claim_page (struct page *page) {
 	struct frame *frame = vm_get_frame ();
-	// printf("vm_do_claim_page 잘 오나요? \n");
 
 	/* Set links */
 	// 해당 페이지와 물리 프레임을 연결.
@@ -305,13 +305,7 @@ vm_do_claim_page (struct page *page) {
 	page->frame = frame;
 	
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
-	// install_page 안에 pml4_set_page( page->va, frame->kva, false);이 있음
-	// 근데 임포트가 잘 안되네;;
-	// if (!install_page(page->va,  frame->kva , false)) {return false;}
 	struct thread *t = thread_current();
-	// if (!(pml4_get_page (t->pml4, page) == NULL && pml4_set_page (t->pml4, page, frame->kva, page->writable))) {
-	// 	return false; 
-	// }
 	pml4_set_page (t->pml4, page->va, frame->kva, page->writable);
 
 	return swap_in (page, frame->kva);
@@ -330,7 +324,6 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		struct supplemental_page_table *src UNUSED) {
 	/* hash.h  의 Iteration 파트를 참조하자. */
 	/* A hash table iterator. */
-	printf("설마 supplemental_page_table_copy 오나? \n");
 	struct hash_iterator i;
 	hash_first(&i,&src->hash_brown);
 	/* Advances I to the next element in the hash table and returns
@@ -338,9 +331,10 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
    	   are returned in arbitrary order.  */
 	while(hash_next(&i))  {
 		struct page *src_page = hash_entry(hash_cur(&i), struct page, hash_elem);
-		printf("설마 supplemental_page_table_copy 1? \n");
 
-		enum vm_type type = page_get_type(src_page);
+		// enum vm_type type = page_get_type(src_page);
+		// 🐁 아래 식 대신, 위 함수 (page_get_type)를 썼다고 fork가 실패했다면 여러분들은 믿으시겠습니까??? 🐁
+		enum vm_type type = src_page->operations->type;
 		void *upage = src_page->va;
 		bool writable = src_page->writable;
 		vm_initializer *init = src_page->uninit.init;
@@ -351,39 +345,32 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 			continue;
 		}
 
-		else if (type == VM_FILE) {
-			struct lazy_load_data *aux_args = (struct lazy_load_data *) malloc(sizeof(struct lazy_load_data));
+		if (type == VM_ANON) {
+			if (!vm_alloc_page(type, upage, writable)) {
+				return false;
+			}
+		}
+
+		if (type == VM_FILE) {
+			struct file_page *aux_args = (struct file_page *) malloc(sizeof(struct file_page));
             aux_args->file = src_page->file.file;
             aux_args->ofs = src_page->file.ofs;
             aux_args->read_bytes = src_page->file.read_bytes;
             aux_args->zero_bytes = src_page->file.zero_bytes;
 
             if (!vm_alloc_page_with_initializer(type, upage, writable, NULL, aux_args))
-				printf("설마 supplemental_page_table_copy VM_FILE 실패? \n");
                 return false;
-            struct page *file_page = spt_find_page(dst, upage);
-            file_backed_initializer(file_page, type, NULL);
-            file_page->frame = src_page->frame;
-            pml4_set_page(thread_current()->pml4, file_page->va, src_page->frame->kva, src_page->writable);
-			printf("설마 supplemental_page_table_copy 2? \n");
             continue;
 		}
 
-		if (!vm_alloc_page(type, upage, writable)) {
-			printf("설마 supplemental_page_table_copy 3? \n");
-			return false;
-		}
-		printf("설마 supplemental_page_table_copy 4? \n");
-
+		/* 새로운 페이지 연결! */
 		if (!vm_claim_page(upage)) {
 			return false;
 		}
-		printf("설마 supplemental_page_table_copy 5? \n");
-
+		/* 복사! */
 		struct page *dst_page = spt_find_page(dst,upage);
 		memcpy(dst_page->frame->kva, src_page->frame->kva,PGSIZE);
 	}
-	printf("설마 supplemental_page_table_copy 성공리턴??? \n");
 	return true;
 }
 
@@ -408,15 +395,15 @@ hash_destroy_func (struct hash_elem *e, void *aux) {
 static
 unsigned
 vm_hash_func (const struct hash_elem *p_, void *aux UNUSED) {
-	/* hash_entry()로 element에 대한 vm_entry 구조체 검색 */
-	/* hash_int()를 이용해서 vm_entry의 멤버 vaddr에 대한 해시값을
-	구하고 반환 */
+	/* hash_entry()로 element에 대한 vm_entry 구조체 (ppt에서는 struct page를 vm_entry라고 부른다) */
+	/* hash_bytes()를 이용해서 vm_entry의 멤버 vaddr에 대한 해시값을 구하고 반환 */
 	const struct page *p = hash_entry(p_, struct page, hash_elem);
 	return hash_bytes(&p->va, sizeof(p->va));
 }
 
 static
 unsigned vm_less_func (const struct hash_elem *a, const struct hash_elem *b, void *aux) {
+	/* PPT 설명 주석*/
 	/* hash_entry()로 각각의 element에 대한 vm_entry 구조체를 얻은
 	후 vaddr 비교 (b가 크다면 true, a가 크다면 false */
 	const struct page *p_a = hash_entry(a, struct page, hash_elem);

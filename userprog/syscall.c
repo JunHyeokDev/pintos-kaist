@@ -155,23 +155,8 @@ wait(int pid) {
 
 int
 exec(const char *cmd_line) {
-	//  cmd_line: 새로운 프로세스에 실행할 프로그램 명령어
 	is_valid_addr(cmd_line);
 
-	// int child_tid = process_create_initd(cmd_line);
-	// if ( child_tid == -1) {
-	// 	return -1;
-	// }
-	// struct thread* child = get_child_process(child_tid);
-
-	// sema_down(&child->wait_sema);
-	// /* 자식 프로세스 디스크립터 삭제*/
-	// list_remove(&child->child_elem);
-	// /* 자식 프로세스의 exit status 리턴*/
-	// sema_up(&child->exit_sema);
-
-	//NOT_REACHED();
-	//return 0;
 	struct thread * cur = thread_current();
 	
 	char *fn_copy = palloc_get_page (0); // 이거 임포트 제대로 안돼서 에러남.
@@ -189,8 +174,11 @@ exec(const char *cmd_line) {
 }
 
 bool create (const char *file, unsigned initial_size) {
+	// lock_acquire(&filesys_lock);
 	is_valid_addr(file);
-	return filesys_create(file,initial_size);
+	bool ret = filesys_create(file,initial_size);
+	// lock_release(&filesys_lock);
+	return ret;
 }
 
 bool remove(const char *file) {
@@ -246,6 +234,7 @@ close (int fd) {
 	struct file *open_file = process_get_file(fd);
 	if (open_file == NULL)
 		return;
+	file_close(open_file);
 	process_close_file(fd);
 }
 
@@ -301,7 +290,6 @@ int write (int fd, const void *buffer, unsigned size) {
 }
 
 int fork(const char *thread_name, struct intr_frame *f) {
-	printf("fork 시스템콜진입 \n");
 	is_valid_addr(thread_name);
 	return process_fork(thread_name, f);
 }
@@ -313,30 +301,35 @@ void *mmap(void *addr, size_t length, int writable, int fd, off_t offset)
     struct file *f = process_get_file(fd);
     if (f == NULL)
         return NULL;
+	/* 2. Your mmap should also fail when length is zero */
 	if (file_length(f) == 0 || (int)length <= 0)
         return NULL;
 	
-	/* 2. addr is not page-aligned or overlaps any existing set of mapped pages
+	/* 3. addr is not page-aligned or overlaps any existing set of mapped pages
 		including the stack or pages mapped at executable load time */
-	/* 3. addr is null */
     if (addr != pg_round_down(addr)) {
 		return NULL;
 	}
+	/* 4. Therefore, if addr is 0, it must fail */ 
 	if (addr == NULL) {
         return NULL;
 	}
 
-	/* 유저 가상 메모리 주소 범위 확인 */
+	/* 5.유저 가상 메모리 주소 범위 확인 */
     if (!is_user_vaddr(addr) || !is_user_vaddr(addr + length))
         return NULL;
-	/* 오프셋으로 정렬된 것인지 확인 */
+		
+	/* 6. 오프셋으로 정렬된 것인지 확인 */
 	if (offset != pg_round_down(offset)) {
 		return NULL;
 	}
-	/* 페이지 유무 확인 */
-    if (spt_find_page(&thread_current()->spt, addr))
+	if (offset % PGSIZE != 0) {
+		return NULL;
+	}
+	/* 7. 페이지 유무 확인.  */ 
+    if (spt_find_page(&thread_current()->spt, addr) != NULL)
         return NULL;
-
+	// printf("addr: %p length: %d writable: %d fd: %d offset: %d\n", addr, length, writable, fd, offset);
     return do_mmap(addr, length, writable, f, offset);
 }
 
