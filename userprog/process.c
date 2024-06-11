@@ -79,8 +79,9 @@ process_create_initd (const char *file_name) {
 	
 	/* Create a new thread to execute FILE_NAME. */
 	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
-	if (tid == TID_ERROR)
+	if (tid == TID_ERROR){
 		palloc_free_page (fn_copy);
+	}
 	return tid;
 }
 
@@ -106,20 +107,20 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 
 	/* intr frame 복사 */
 	struct thread *cur = thread_current();
+	// printf("[Fork] 🐁 thread %d is making fork!! ! \n", cur->tid-2);
+
 	memcpy(&cur->copied_if, if_, sizeof(struct intr_frame));
 	tid_t tid = thread_create (name,
 			PRI_DEFAULT, __do_fork, cur);
-	if (tid == TID_ERROR) // Error handling
-		return TID_ERROR;
- 
-	struct thread *child = get_child_process(tid);
-	if (child == NULL) 
-		return TID_ERROR;
-	sema_down(&child->fork_sema);
-
-	if (child->exit_code == -1) {
+	if (tid == TID_ERROR) { // Error handling
 		return TID_ERROR;
 	}
+	struct thread *child = get_child_process(tid);
+	if (child == NULL || child->exit_code == -1) {
+		return TID_ERROR;
+	}
+	sema_down(&child->fork_sema);
+	// printf("[Fork] 🐁 thread %d made fork number %d!! ! \n", cur->tid-2, child->tid-2);
 	return tid;
 }
 
@@ -215,15 +216,17 @@ __do_fork (void *aux) {
 		// 	continue;
 		// file = file_duplicate(file);
 		// current->fd_table[i] = file;
-		if (file == NULL)
+		if (file == NULL) {
 			continue;
-		if (file > 2)
+		}
+		if (file > 2) {
 			file = file_duplicate(file);
+		}
 		current->fd_table[i] = file;
 	}
 	current->cur_fd = parent->cur_fd;
-	sema_up(&current->fork_sema);
 	process_init ();
+	sema_up(&current->fork_sema);
 
 	/* Finally, switch to the newly created process. */
 	if (succ)
@@ -231,7 +234,7 @@ __do_fork (void *aux) {
 error:
 	current->exit_code = TID_ERROR;
 	sema_up(&current->fork_sema);
-	exit(-10); // thread_exit 대신 exit
+	thread_exit(); // thread_exit 대신 exit
 }
 
 /* Switch the current execution context to the f_name.
@@ -262,12 +265,14 @@ process_exec (void *f_name) {
 	success = load (file_name, &_if);
 	lock_release(&filesys_lock);
 	/* If load failed, quit. */
-	if (!success)
+	if (!success) {
+		palloc_free_page (file_name);
 		return -1;
+	}
 	argument_stack(&argv, argc,&_if);
 
 	// hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true);
-	palloc_free_page (file_name);
+	// palloc_free_page (file_name);
 	
 	/* Start switched process. */
 	do_iret (&_if);
@@ -298,6 +303,7 @@ process_wait (tid_t child_tid UNUSED) {
 	// for(int i=0; i< 1000000000; i++) {
 	// }
 	// printf("🐁 sema_down &child->wait_sema\n");
+	// printf("[wait] 🐁 thread %d is waiting ! \n", child->tid-2);
 	sema_down(&child->wait_sema);
 
 	list_remove(&child->child_elem);
@@ -305,6 +311,7 @@ process_wait (tid_t child_tid UNUSED) {
 	sema_up(&child->exit_sema);
 	// printf("🐁 sema_up &child->exit_sema\n");
 	int ret = child->exit_code;
+	// printf("[wait] 🐁 thread %d is not waiting now ! ! \n", child->tid-2);
 	return ret;
 
 }
@@ -318,14 +325,14 @@ process_exit (void) {
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
+	// printf("[Exit] 🐁 thread %d is waiting for exit! ! \n", curr->tid-2);
 	process_exit_file();
 	palloc_free_multiple(curr->fd_table,FDT_PAGES);
 	file_close(curr->file_holding);
 	process_cleanup ();
 	sema_up(&curr->wait_sema);
-	// printf("🐁새끼왜죽어???\n");
 	sema_down(&curr->exit_sema);
-	// printf("🐁새끼가 종료 완료..?\n");
+	// printf("[Exit] 🐁 thread %d is about to exit! ! \n", curr->tid-2);
 }
 
 /* Free the current process's resources. */
@@ -451,6 +458,7 @@ load (const char *file_name, struct intr_frame *if_) {
 		goto done;
 	}
 
+
 	/* Read and verify executable header. */
 	if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
 			|| memcmp (ehdr.e_ident, "\177ELF\2\1\1", 7)
@@ -515,7 +523,8 @@ load (const char *file_name, struct intr_frame *if_) {
 				break;
 		}
 	}
-
+	t->file_holding = file;
+	file_deny_write(file);
 	/* Set up stack. */
 	// printf("setup_stack 오긴 하는거야??\n");
 	if (!setup_stack (if_))
@@ -691,7 +700,7 @@ lazy_load_segment (struct page *page, void *aux) {
 	/* you have to find the file to read the segment from 
 	and eventually read the segment into memory. */
 		
-	struct file_page *data = (struct file_page*) aux;
+	struct lazy_load_data *data = (struct lazy_load_data*) aux;
 	struct file *file = data->file;
 	off_t ofs = data->ofs;
 	size_t read_bytes = data->read_bytes;
@@ -745,7 +754,7 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		/* You may want to create a structure that contains necessary information for the loading of binary. */
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
 		// 매개변수 (struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable)
-		struct file_page *aux = (struct file_page*)malloc(sizeof(struct file_page));
+		struct lazy_load_data *aux = (struct lazy_load_data*)malloc(sizeof(struct lazy_load_data));
 		aux->file = file;
 		aux->ofs = ofs;
 		aux->read_bytes = page_read_bytes;

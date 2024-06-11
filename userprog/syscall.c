@@ -174,10 +174,10 @@ exec(const char *cmd_line) {
 }
 
 bool create (const char *file, unsigned initial_size) {
-	// lock_acquire(&filesys_lock);
 	is_valid_addr(file);
+	lock_acquire(&filesys_lock);
 	bool ret = filesys_create(file,initial_size);
-	// lock_release(&filesys_lock);
+	lock_release(&filesys_lock);
 	return ret;
 }
 
@@ -188,24 +188,22 @@ bool remove(const char *file) {
 
 int open (const char *file) {
 	is_valid_addr(file);
-	
+	lock_acquire(&filesys_lock);
 	struct file* tmp;
 	int fd = -1;
 
 	tmp = filesys_open(file);
 	if (tmp == NULL) {
+		lock_release(&filesys_lock);
 		return -1;
 	}
 
-	if(strcmp(thread_name(), file) == 0) {
-		file_deny_write(tmp); // 현재 읽고 있는 파일은 write를 할 수 없도록 설정합니다.
-	}
 
 	fd = process_add_file(tmp);
 	if (fd == -1) {
 		file_close(tmp);  // file.c 
 	}
-
+	lock_release(&filesys_lock);
 	return fd;
 }
 
@@ -218,6 +216,7 @@ void seek(int fd, unsigned position) {
 	if (tmp) {
 		file_seek(tmp, position);
 	}
+	return NULL;
 }
 
 unsigned tell(int fd) {
@@ -226,7 +225,7 @@ unsigned tell(int fd) {
 	struct file *tmp = process_get_file(fd);
 	if (tmp)
 		return file_tell(tmp);
-	return NULL;
+	return -1;
 }
 
 void 
@@ -250,6 +249,12 @@ read (int fd, void *buffer, unsigned size) {
 	is_valid_addr(buffer);
 	int bytes_read = 0;
 	lock_acquire(&filesys_lock);
+	/* (pt-write-code2) survived reading data into code segment: FAILED */
+	struct page *page = spt_find_page(&thread_current()->spt,buffer);
+	if(page && !page->writable) {
+		lock_release(&filesys_lock);
+		exit(-1);
+	}
 	// 표준 입력 처리: fd가 0인 경우 키보드에서 입력을 읽습니다.
     if (fd == 0) {
         unsigned i;
@@ -290,7 +295,7 @@ int write (int fd, const void *buffer, unsigned size) {
 }
 
 int fork(const char *thread_name, struct intr_frame *f) {
-	is_valid_addr(thread_name);
+	// is_valid_addr(thread_name);
 	return process_fork(thread_name, f);
 }
 

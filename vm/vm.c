@@ -7,7 +7,9 @@
 #include "include/threads/vaddr.h"
 #include "userprog/process.h"
 #include <string.h>
+#include "vm/file.h"
 struct list frame_list;
+static struct list_elem *clock_ptr = NULL;
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -22,6 +24,7 @@ vm_init (void) {
 	/* DO NOT MODIFY UPPER LINES. */
 	/* TODO: Your code goes here. */
 	list_init(&frame_list);
+	clock_ptr = list_begin(&frame_list);
 }
 
 /* Get the type of the page. This function is useful if you want to know the
@@ -88,7 +91,6 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		return ret;
 	}
 err:
-	printf("vm_alloc_page_with_initializer");
 	return false;
 }
 
@@ -142,19 +144,33 @@ vm_get_victim (void) {
 	struct frame *victim = NULL;
 	 /* TODO: The policy for eviction is up to you. */
 	// for문 돌면서 추방할녀석 선정하기
-	struct list_elem *e = list_begin(&frame_list);
 	struct thread *cur = thread_current();
 
-	for (e; e!=list_end(&frame_list); e = list_next(e)) {
-		victim = list_entry(e, struct frame, frame_elem);
-		if (pml4_is_accessed(cur->pml4, victim->page->va)) {
-			
-		} else {
-			return victim;
-		}
-	}
+    while (true) {
+        if (clock_ptr == list_end(&frame_list)) {
+            clock_ptr = list_begin(&frame_list);
+        }
 
-	return NULL;
+        victim = list_entry(clock_ptr, struct frame, frame_elem);
+
+        if (victim->page == NULL) {
+            return victim;
+        }
+
+        if (pml4_is_accessed(cur->pml4, victim->page->va)) {
+            pml4_set_accessed(cur->pml4, victim->page->va, 0);
+            clock_ptr = list_next(clock_ptr);
+        } else {
+			// 추방!!
+            struct list_elem *next = list_next(clock_ptr);
+            if (next == list_end(&frame_list)) {
+                next = list_begin(&frame_list);
+            }
+            clock_ptr = next;
+            return victim;
+        }
+    }
+	return victim;
 }
 
 /* Evict one page and return the corresponding frame.
@@ -164,7 +180,7 @@ vm_evict_frame (void) {
 	struct frame *victim UNUSED = vm_get_victim ();
 	/* TODO: swap out the victim and return the evicted frame. */
 	swap_out(victim->page);
-	return NULL;
+	return victim;
 }
 
 /* palloc() and get frame. If there is no available page, evict the page
@@ -178,9 +194,10 @@ vm_get_frame (void) {
 	frame->kva = palloc_get_page(PAL_USER);
 
 	if(frame->kva == NULL) {
-		PANIC("todolater"); // 추방알고리즘 
+		frame = vm_evict_frame();
+		frame->page = NULL;
+		return frame;
 	}
-	/* 밑에 dealloc 함수가 있어서, free는 신경안써도 되는거같다. */
 	frame->page = NULL; // ASSERT (frame->page == NULL); 가 있으므로, NULL로 초기화 해줍시다!
 	list_push_back(&frame_list,&frame->frame_elem);
 	ASSERT (frame != NULL);
@@ -202,9 +219,7 @@ vm_stack_growth (void *addr UNUSED) {
 /* Handle the fault on write_protected page */
 static bool
 vm_handle_wp (struct page *page UNUSED) {
-	if (page->writable == false) {
-		return false;
-	}
+
 }
 
 /* Return true on success */
@@ -241,7 +256,7 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 	/* TODO: Validate the fault */
 	/* TODO: Your code goes here */
 	/* Stack 관련 fault 인지, 진짜 데이터가 없어서인지 구분해야함.*/
-	if (addr == NULL || is_kernel_vaddr(addr)) {
+	if (addr == 0 || addr == NULL || is_kernel_vaddr(addr)) {
 		return false;
 	}
 	void *rsp = user ? f->rsp : thread_current()->user_rsp;
@@ -263,11 +278,10 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 		if (page == NULL) {
 			return false;
 		}
-		if (write) {
-			if (vm_handle_wp(page)) {
-				return false;
-			}
+		if (write && page->writable == false) {	
+			return false;
 		}
+		
 		return vm_do_claim_page(page); 
  	}
 	return false;
@@ -306,9 +320,10 @@ vm_do_claim_page (struct page *page) {
 	
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
 	struct thread *t = thread_current();
-	pml4_set_page (t->pml4, page->va, frame->kva, page->writable);
-
-	return swap_in (page, frame->kva);
+	if (pml4_set_page (t->pml4, page->va, frame->kva, page->writable)) {
+		return swap_in (page, frame->kva);
+	}
+	return false;
 }
 
 /* Initialize new supplemental page table */
@@ -352,7 +367,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		}
 
 		if (type == VM_FILE) {
-			struct file_page *aux_args = (struct file_page *) malloc(sizeof(struct file_page));
+			struct lazy_load_data *aux_args = (struct lazy_load_data *) malloc(sizeof(struct lazy_load_data));
             aux_args->file = src_page->file.file;
             aux_args->ofs = src_page->file.ofs;
             aux_args->read_bytes = src_page->file.read_bytes;

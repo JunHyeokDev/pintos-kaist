@@ -33,7 +33,7 @@ file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
 	such as the file that is backing the memory.*/
 	struct file_page *file_page = &page->file;
 
-	struct file_page *data = (struct file_page*)page->uninit.aux;
+	struct lazy_load_data *data = (struct lazy_load_data*)page->uninit.aux;
 	file_page->file = data->file;
 	file_page->ofs = data->ofs;
 	file_page->read_bytes = data->read_bytes;
@@ -45,13 +45,35 @@ file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
 /* Swap in the page by read contents from the file. */
 static bool
 file_backed_swap_in (struct page *page, void *kva) {
-	struct file_page *file_page UNUSED = &page->file;
+	struct file_page *file_page = &page->file;
+
+	file_seek(file_page->file, file_page->ofs);
+
+	if (file_read(file_page->file, kva, file_page->read_bytes) != (int) file_page->read_bytes ) {
+		return false;
+	}
+
+	memset(kva+file_page->read_bytes, 0, file_page->zero_bytes);
+
+	return true;
 }
 
 /* Swap out the page by writeback contents to the file. */
-static bool
+bool
 file_backed_swap_out (struct page *page) {
-	struct file_page *file_page UNUSED = &page->file;
+	struct file_page *file_page = &page->file;
+	struct thread *cur = thread_current();
+	if(pml4_is_dirty(cur->pml4, page->va)) {
+		file_seek(file_page->file, file_page->ofs);
+		/* Writes SIZE bytes from BUFFER into FILE   kva -> file (진짜 디스크에 있는 파일)   */
+		/* 따라서, 물리 메모리에 있는 정보를 파일에 쓰는 작업을 수행함.*/
+		if (file_write(file_page->file, page->frame->kva, file_page->read_bytes) != (int) file_page->read_bytes) {
+			return false;
+		}
+		pml4_set_dirty(cur->pml4, page->va, 0);
+	}
+	pml4_clear_page(cur->pml4, page->va);
+	return true;
 }
 
 /* Destory the file backed page. PAGE will be freed by the caller. */
@@ -102,7 +124,7 @@ do_mmap (void *addr, size_t length, int writable,
 		// the number of bytes to fill with zeros within the main loop
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-		struct file_page *aux = (struct file_page*)malloc(sizeof(struct file_page));
+		struct lazy_load_data *aux = (struct lazy_load_data*)malloc(sizeof(struct lazy_load_data));
         aux->file = f;
         aux->ofs = offset;
         aux->read_bytes = page_read_bytes;
@@ -111,7 +133,7 @@ do_mmap (void *addr, size_t length, int writable,
 		// file_backed_initializer (struct page *page, enum vm_type type, void *kva)
 		if (!vm_alloc_page_with_initializer (VM_FILE, addr,
 					writable, lazy_load_file, aux)){
-            free(aux);
+            // free(aux);
             // file_close(f);
 			return NULL;
 		}
@@ -157,7 +179,7 @@ lazy_load_file (struct page *page, void *aux) {
 	/* you have to find the file to read the segment from 
 	and eventually read the segment into memory. */
 		
-	struct file_page *data = (struct file_page*) aux;
+	struct lazy_load_data *data = (struct lazy_load_data*) aux;
 	struct file *file = data->file;
 	off_t ofs = data->ofs;
 	size_t read_bytes = data->read_bytes;
