@@ -305,12 +305,11 @@ process_wait (tid_t child_tid UNUSED) {
 	// printf("🐁 sema_down &child->wait_sema\n");
 	// printf("[wait] 🐁 thread %d is waiting ! \n", child->tid-2);
 	sema_down(&child->wait_sema);
-
+	int ret = child->exit_code;
 	list_remove(&child->child_elem);
 
 	sema_up(&child->exit_sema);
 	// printf("🐁 sema_up &child->exit_sema\n");
-	int ret = child->exit_code;
 	// printf("[wait] 🐁 thread %d is not waiting now ! ! \n", child->tid-2);
 	return ret;
 
@@ -342,6 +341,7 @@ process_cleanup (void) {
 
 #ifdef VM
 	supplemental_page_table_kill (&curr->spt);
+	return;
 #endif
 
 	uint64_t *pml4;

@@ -66,7 +66,7 @@ anon_swap_out (struct page *page) {
 	if (swap_index != BITMAP_ERROR) {
         for (size_t i = 0; i < (PGSIZE / DISK_SECTOR_SIZE); i++) {
             disk_write(swap_disk, swap_index * (PGSIZE / DISK_SECTOR_SIZE) + i, 
-            page->va + (i * DISK_SECTOR_SIZE));            
+            page->frame->kva + (i * DISK_SECTOR_SIZE));            
         }
 		anon_page->swap_index = swap_index;
 		pml4_clear_page(thread_current()->pml4,page->va);

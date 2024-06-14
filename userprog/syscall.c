@@ -251,7 +251,7 @@ read (int fd, void *buffer, unsigned size) {
 	lock_acquire(&filesys_lock);
 	/* (pt-write-code2) survived reading data into code segment: FAILED */
 	struct page *page = spt_find_page(&thread_current()->spt,buffer);
-	if(page && !page->writable) {
+	if(page && !page->origin_writable && !page->writable) {
 		lock_release(&filesys_lock);
 		exit(-1);
 	}

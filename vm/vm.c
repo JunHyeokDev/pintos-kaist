@@ -219,7 +219,19 @@ vm_stack_growth (void *addr UNUSED) {
 /* Handle the fault on write_protected page */
 static bool
 vm_handle_wp (struct page *page UNUSED) {
+	void *cow_kva = palloc_get_page(PAL_USER);
+	memcpy(cow_kva, page->frame->kva, PGSIZE);
 
+	struct frame *new_frame = malloc(sizeof(struct frame));
+
+	new_frame->kva = cow_kva;
+    new_frame->page = page;
+
+    page->frame = new_frame;
+    page->writable = true;
+
+	list_push_back(&frame_list, &new_frame->frame_elem);
+    return pml4_set_page(thread_current()->pml4, page->va, cow_kva, true);
 }
 
 /* Return true on success */
@@ -259,6 +271,13 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 	if (addr == 0 || addr == NULL || is_kernel_vaddr(addr)) {
 		return false;
 	}
+
+	/* Copy-On-Write */
+	page = spt_find_page(spt, addr);
+	/* 쓰기가 가능하며, 물리 페이지가 이미 존재한다면 handle_write_protection 수행. */
+	if (write && !not_present && page->origin_writable && page)
+		return vm_handle_wp(page);
+
 	void *rsp = user ? f->rsp : thread_current()->user_rsp;
 
 	/* not_present 가 true인 경우, 물리페이지가 없는 것이다. */
@@ -364,6 +383,16 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 			if (!vm_alloc_page(type, upage, writable)) {
 				return false;
 			}
+			struct page *new_page = spt_find_page(dst, src_page->va);
+			new_page->origin_writable = src_page->writable;
+			new_page->writable = false;
+			new_page->frame = src_page->frame;
+
+			list_push_back(&frame_list, &new_page->frame->frame_elem);
+			if (!pml4_set_page(thread_current()->pml4, new_page->va, new_page->frame->kva, 0))
+				return false;
+			swap_in(new_page, new_page->frame->kva);
+			continue;
 		}
 
 		if (type == VM_FILE) {
